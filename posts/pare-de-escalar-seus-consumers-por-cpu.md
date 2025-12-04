@@ -5,13 +5,13 @@ slug: pare-de-escalar-seus-consumers-por-cpu
 summary: "Por que o HPA nativo do Kubernetes está matando sua arquitetura de eventos e como o KEDA resolve isso"
 tags: ["Kubernetes", "KEDA", "DevOps", "Kafka", "Arquitetura", "Autoscaling"]
 cover_image_url: ""
-published_at: 2025-12-04T04:55:16.371+00:00
+published_at: 2025-12-04T04:59:24.133+00:00
 reading_time_minutes: 9
 featured: false
 status: published
-view_count: 0
+view_count: 1
 created_at: 2025-12-04T04:55:19.237185+00:00
-updated_at: 2025-12-04T04:55:19.237185+00:00
+updated_at: 2025-12-04T04:59:26.954583+00:00
 ---
 
 # Pare de Escalar seus Consumers por CPU
@@ -154,7 +154,7 @@ O HPA demora a reagir. A CPU sobe um pouco, ele cria 1 ou 2 réplicas, mas nunca
 ```mermaid
 xychart-beta
     title "HPA (CPU): Lag vs Pod Count"
-    x-axis
+    x-axis ["10:00", "10:05", "10:10", "10:15", "10:20"]
     y-axis "Quantidade" 0 --> 5000
     line [0, 5000, 4800, 4500, 4000]
     bar [2, 3, 3, 4, 4]
@@ -168,7 +168,7 @@ Assim que o Kafka reporta o Lag, o KEDA projeta a necessidade de réplicas e esc
 ```mermaid
 xychart-beta
     title "KEDA (Event Driven): Lag vs Pod Count"
-    x-axis
+    x-axis ["10:00", "10:05", "10:10", "10:15", "10:20"]
     y-axis "Quantidade" 0 --> 5000
     line [0, 5000, 2000, 500, 0]
     bar [2, 50, 50, 20, 2]
@@ -199,9 +199,9 @@ Se você está gerenciando microsserviços orientados a eventos e seus consumers
 
 ## English Version
 
-You've designed a perfect event-driven microservices architecture (EDA). You've used Kafka (or RabbitMQ/SQS), separated producers from consumers, and deployed everything on Kubernetes.
+You designed a perfect event-driven microservices architecture (EDA). You used Kafka (or RabbitMQ/SQS), separated producers from consumers, and deployed everything on Kubernetes.
 
-Everything works well, until Black Friday. The order queue explodes to 500,000 accumulated messages (Lag). You rush to your Grafana dashboard and see that your consumer Pods... **are not scaling.**
+Everything works well, until Black Friday. The order queue explodes to 500,000 accumulated messages (Lag). You rush to the Grafana dashboard and see that your consumer Pods... **are not scaling.**
 
 They remain fixed at 2 replicas, while the business loses money. Looking at CPU usage, you see a meager 10%.
 
@@ -211,18 +211,18 @@ In this article, we'll understand why the standard HPA (Horizontal Pod Autoscale
 
 ---
 
-### The Problem: CPU is Not a Proxy for Asynchronous Work
+### The Problem: CPU Is Not a Proxy for Asynchronous Work
 
-Kubernetes' native HPA was primarily designed with stateless REST APIs in mind. If an API receives many requests, it processes more, the CPU goes up, the HPA detects it, and scales. Simple.
+Native Kubernetes HPA was designed primarily for stateless REST APIs. If an API receives many requests, it processes more, CPU goes up, HPA detects it, and scales. Simple.
 
 However, a queue **Consumer** works differently.
 1. It fetches a message.
-2. Performs an I/O call (saves to database, calls payment API).
-3. Acknowledges the message (Ack).
+2. It makes an I/O call (saves to database, calls payment API).
+3. It acknowledges the message (Ack).
 
 During step 2 (I/O), the thread is blocked waiting for a response. **Waiting consumes almost zero CPU.**
 
-If your queue has 1 million messages, but the processing bottleneck is I/O (database or external API), your Pods will have low CPU but will be working at the limit of their I/O capacity.
+If your queue has 1 million messages, but the processing bottleneck is I/O (database or external API), your Pods will have low CPU but be operating at their I/O capacity limit.
 
 **Result:** The HPA looks at the CPU (10%), thinks everything is fine, and doesn't create new pods. Meanwhile, the queue lag tends towards infinity.
 
@@ -231,12 +231,12 @@ If your queue has 1 million messages, but the processing bottleneck is I/O (data
 ```mermaid
 graph TD
     subgraph EventSource [Kafka / SQS]
-        Queue[Queue: 50.000 pending msgs]
+        Queue[Queue: 50,000 pending msgs]
     end
 
     subgraph K8s [Kubernetes Cluster]
-        Pod1[Consumer Pod A]
-        Pod2[Consumer Pod B]
+        Pod1[Pod Consumer A]
+        Pod2[Pod Consumer B]
         HPA[Standard HPA]
     end
 
@@ -256,15 +256,15 @@ graph TD
 
 ### The Solution: KEDA (Kubernetes Event-driven Autoscaling)
 
-KEDA is a CNCF project that addresses this exact gap. It acts as a custom "Metrics Server" for Kubernetes.
+KEDA is a CNCF project that solves exactly this gap. It acts as a custom "Metrics Server" for Kubernetes.
 
-Instead of looking inside the Pod (CPU/RAM), KEDA looks outside (at the event source).
+Instead of looking inside the Pod (CPU/RAM), KEDA looks externally (to the event source).
 
 It asks Kafka, RabbitMQ, Prometheus, or Postgres: **"What is the queue size now?"**
 
 If the queue grows, KEDA calculates how many replicas are needed to clear that queue and forces the HPA to scale, regardless of how much CPU the pods are using.
 
-#### The KEDA Architecture
+#### The Architecture with KEDA
 
 ```mermaid
 sequenceDiagram
@@ -276,17 +276,17 @@ sequenceDiagram
     Source->>Source: Lag increases (10k msgs)
     loop Polling Loop
         KEDA->>Source: What is the Lag size?
-        Source-->>KEDA: Lag = 10.000
+        Source-->>KEDA: Lag = 10,000
     end
     
-    Note over KEDA: Calculates necessary replicas:\n(Lag / TargetPerPod)
+    Note over KEDA: Calculates required replicas:\n(Lag / TargetPerPod)
     
     KEDA->>HPA: Updates External Metric
     HPA->>Deploy: Scale UP (2 -> 20 Pods)
-    Deploy->>Source: Parallel consumption
-    Source->>Source: Lag reaches zero
+    Deploy->>Source: Parallel Consumption
+    Source->>Source: Lag clears
     
-    KEDA->>HPA: Normalized Metric
+    KEDA->>HPA: Metric normalized
     HPA->>Deploy: Scale DOWN (20 -> 2 Pods)
 ```
 
@@ -317,29 +317,29 @@ spec:
       lagThreshold: "10" # The Golden Rule
 ```
 
-**What this says:** "KEDA, ensure that each Pod has a maximum of 10 messages of Lag to handle. If the total Lag is 1000, spin up 100 Pods (respecting the maximum of 50)."
+**What this says:** "KEDA, ensure that each Pod handles a maximum of 10 messages of Lag. If the total Lag is 1000, spin up 100 Pods (respecting the maximum of 50)."
 
 ---
 
 ### Case Study: The Load Test
 
-Let's compare the behavior of two identical Deployments under a sudden peak of 5,000 messages.
+Let's compare the behavior of two identical Deployments under a sudden spike of 5,000 messages.
 1. **Deployment A:** Standard HPA (Target CPU 50%).
 2. **Deployment B:** KEDA (Target Lag 50 msgs).
 
-#### 1. HPA (CPU) Behavior - The Death Graph
-The HPA takes time to react. The CPU goes up a bit, it creates 1 or 2 replicas, but never reaches the necessary speed to drain the queue quickly.
+#### 1. HPA (CPU) Behavior - The Death Chart
+The HPA is slow to react. CPU rises slightly, it creates 1 or 2 replicas, but never reaches the speed needed to drain the queue quickly.
 
 ```mermaid
 xychart-beta
     title "HPA (CPU): Lag vs Pod Count"
-    x-axis
+    x-axis ["10:00", "10:05", "10:10", "10:15", "10:20"]
     y-axis "Quantity" 0 --> 5000
     line [0, 5000, 4800, 4500, 4000]
     bar [2, 3, 3, 4, 4]
 ```
 * **Line:** Queue Lag (Drops very slowly).
-* **Bar:** Number of Pods (Increases little).
+* **Bar:** Number of Pods (Rises little).
 
 #### 2. KEDA Behavior - Instant Reaction
 As soon as Kafka reports the Lag, KEDA projects the need for replicas and scales aggressively.
@@ -347,7 +347,7 @@ As soon as Kafka reports the Lag, KEDA projects the need for replicas and scales
 ```mermaid
 xychart-beta
     title "KEDA (Event Driven): Lag vs Pod Count"
-    x-axis
+    x-axis ["10:00", "10:05", "10:10", "10:15", "10:20"]
     y-axis "Quantity" 0 --> 5000
     line [0, 5000, 2000, 500, 0]
     bar [2, 50, 50, 20, 2]
@@ -357,14 +357,14 @@ xychart-beta
 
 ---
 
-### Scale to Zero: The Real Savings
+### Scale to Zero: Real Savings
 
-A "killer" KEDA feature that standard HPA doesn't support is **Scale to Zero**.
+A "killer" feature of KEDA that standard HPA does not support is **Scale to Zero**.
 
 If there are no messages in the queue, why pay for running Pods?
-Native HPA requires at least 1 replica. KEDA can deactivate the Deployment (`replicas: 0`) and reactivate it only when a new message arrives on the topic.
+Native HPA requires at least 1 replica. KEDA can deactivate the Deployment (`replicas: 0`) and reactivate it only when a new message arrives in the topic.
 
-For development environments or sporadic processing (e.g., nightly accounting closing), this can represent **30% to 50%** savings on your Cloud bill.
+For development environments or sporadic processing (e.g., nightly financial closing), this can represent **30% to 50%** savings on your Cloud bill.
 
 ---
 
@@ -372,9 +372,9 @@ For development environments or sporadic processing (e.g., nightly accounting cl
 
 Scaling by CPU makes sense for APIs. For Workers and Consumers, the success metric is queue size (Lag), and KEDA is the industry standard tool for translating this metric to Kubernetes.
 
-If you are managing event-driven microservices and your consumers struggle to keep up with traffic spikes, stop trying to tune CPU request/limit. Install KEDA, configure a `ScaledObject`, and let the infrastructure adapt to the business's real demand, not the processor's heat.
+If you are managing event-driven microservices and your consumers struggle to keep up with traffic spikes, stop trying to tune CPU requests/limits. Install KEDA, configure a `ScaledObject`, and let the infrastructure adapt to real business demand, not processor heat.
 
 ---
 
 *This file is automatically generated and backed up from the blog system.*
-*Last updated: 2025-12-04T04:55:19.888Z*
+*Last updated: 2025-12-04T04:59:27.794Z*
