@@ -5,13 +5,13 @@ slug: pare-de-aumentar-o-pool-de-conexoes
 summary: "Por que "Mais" pode significar "Lento" no HikariCP e como encontrar o número mágico"
 tags: ["Java", "Spring Boot", "HikariCP", "Database", "Performance", "Tuning"]
 cover_image_url: ""
-published_at: 2025-12-04T04:53:45.392+00:00
+published_at: 2025-12-04T05:01:54.89+00:00
 reading_time_minutes: 8
 featured: false
 status: published
-view_count: 0
+view_count: 1
 created_at: 2025-12-04T04:53:32.613329+00:00
-updated_at: 2025-12-04T04:53:48.165484+00:00
+updated_at: 2025-12-04T05:01:57.678334+00:00
 ---
 
 # Pare de Aumentar o Pool de Conexões
@@ -65,27 +65,29 @@ Vamos ver como o fluxo se comporta em um cenário de superalocação (*oversubsc
 graph TD
     subgraph App [Aplicação Spring Boot]
         T1(Thread 1)
-        T2(...)
+        T2("...")
         T100(Thread 100)
     end
 
     subgraph Hikari [HikariCP Pool: 100 Conexões]
         C1[Conn 1]
-        C2(...)
+        C2("...")
         C100[Conn 100]
     end
 
-    subgraph DB [Banco de Dados (4 Cores)]
+    subgraph DB [Banco de Dados 4 Cores]
+        Queue[Fila de Agendamento do SO]
         Core1[CPU Core 1]
         Core2[CPU Core 2]
         Core3[CPU Core 3]
         Core4[CPU Core 4]
-        Queue[Fila de Agendamento do SO]
     end
 
-    App --> Hikari
-    Hikari -- 100 Queries Simultâneas --> Queue
-    Queue -- Alta Concorrência / Thrashing --> Core1
+    %% Conectando os nós em vez dos subgraphs para evitar erros de renderização
+    T100 -.-> C1
+    C100 -- "100 Queries Simultâneas" --> Queue
+    
+    Queue -- "Alta Concorrência / Thrashing" --> Core1
     Queue --> Core2
     Queue --> Core3
     Queue --> Core4
@@ -205,7 +207,7 @@ Na próxima vez que ver um timeout de conexão, antes de aumentar o pool para 10
 
 ## English Version
 
-When your application starts throwing `SQLTransientConnectionException: Connection is not available, request timed out`, 90% of developers' natural instinct is to go to `application.properties` and do this:
+When your application starts throwing `SQLTransientConnectionException: Connection is not available, request timed out`, the natural instinct for 90% of developers is to go to `application.properties` and do this:
 
 ```properties
 # The classic "band-aid" that makes the wound worse
@@ -214,7 +216,7 @@ spring.datasource.hikari.maximum-pool-size=100
 
 If 10 connections were bottlenecking, 100 should solve it, right? **Wrong.**
 
-In most high-concurrency cases, increasing the connection pool beyond a mathematically calculated limit not only *doesn't solve* the problem, but it decreases your application's *throughput* and increases latent latency.
+In most high-concurrency scenarios, increasing the connection pool beyond a mathematically calculated limit not only *doesn't solve* the problem but also decreases your application's *throughput* and increases latent latency.
 
 In this article, we'll understand the physics behind connection pooling, the hidden cost of *Context Switching*, and what the "Magic Formula" is for sizing your pool in Spring Boot.
 
@@ -222,11 +224,11 @@ In this article, we'll understand the physics behind connection pooling, the hid
 
 ### The Myth: "More connections = More parallel processing"
 
-It's intuitive to think of the database as a warehouse: the more open doors (connections), the more people (threads) can come and go.
+It's intuitive to think of the database as a warehouse: the more open doors (connections), the more people (threads) can go in and out.
 
 However, computers don't work that way. The database (whether PostgreSQL, MySQL, or Oracle) is limited by the number of **CPU Cores** available to process active queries.
 
-If you have a database server with **4 Cores** and you configure a pool of **100 connections**:
+If you have a database server with **4 Cores** and configure a pool of **100 connections**:
 1. You allow 100 queries to try to run "simultaneously."
 2. The CPU can only process 4 at a time (one per Core).
 3. The other 96 enter a waiting queue.
@@ -236,9 +238,9 @@ This process is called **Context Switching**. And it's expensive for the CPU.
 
 #### The Cost of Context Switching
 
-Imagine you're writing code (CPU processing). Every 10 seconds, a Project Manager interrupts you (Context Switch) to ask about a different ticket. You spend more time trying to remember where you left off than actually coding.
+Imagine you're writing code (CPU processing). Every 10 seconds, a Project Manager interrupts you (Context Switch) to ask about a different ticket. You spend more time trying to remember where you left off than effectively coding.
 
-This is exactly what happens with your database when the pool is too large: it spends more CPU time switching tasks than executing SQL.
+This is exactly what happens to your database when the pool is too large: it spends more CPU switching tasks than executing SQL.
 
 ---
 
@@ -250,27 +252,29 @@ Let's see how the flow behaves in an oversubscription scenario.
 graph TD
     subgraph App [Spring Boot Application]
         T1(Thread 1)
-        T2(...)
+        T2("...")
         T100(Thread 100)
     end
 
     subgraph Hikari [HikariCP Pool: 100 Connections]
         C1[Conn 1]
-        C2(...)
+        C2("...")
         C100[Conn 100]
     end
 
-    subgraph DB [Database (4 Cores)]
+    subgraph DB [Database 4 Cores]
+        Queue[OS Scheduler Queue]
         Core1[CPU Core 1]
         Core2[CPU Core 2]
         Core3[CPU Core 3]
         Core4[CPU Core 4]
-        Queue[OS Scheduling Queue]
     end
 
-    App --> Hikari
-    Hikari -- 100 Concurrent Queries --> Queue
-    Queue -- High Concurrency / Thrashing --> Core1
+    %% Conectando os nós em vez dos subgraphs para evitar erros de renderização
+    T100 -.-> C1
+    C100 -- "100 Concurrent Queries" --> Queue
+    
+    Queue -- "High Concurrency / Thrashing" --> Core1
     Queue --> Core2
     Queue --> Core3
     Queue --> Core4
@@ -279,7 +283,7 @@ graph TD
     style DB fill:#ffcccc,stroke:#333,stroke-width:2px
 ```
 
-*Result:* The database CPU experiences *thrashing*, latency rises, and throughput drops.
+*Result:* The database CPU trashes, latency rises, and throughput drops.
 
 ---
 
@@ -291,29 +295,29 @@ $$
 PoolSize = (TotalCores \times 2) + SpindleCount
 $$
 
-*   **TotalCores:** Number of logical CPUs on the database server.
+*   **TotalCores:** Number of logical CPUs of the database server.
 *   **SpindleCount:** Number of disks (usually ignored in Cloud/SSD, considered 0 or 1).
 
 **Practical Example:**
 If your RDS has **4 vCPUs**:
 Ideal Pool = $(4 \times 2) + 1 = 9$.
 
-Yes, **9 connections**. Round it up to 10. Configuring 50 or 100 connections for a 4-CPU database is a waste of resources.
+Yes, **9 connections**. Round up to 10. Configuring 50 or 100 connections for a 4-CPU database is a waste of resources.
 
 ---
 
 ### Case Study: Real Performance
 
-Let's simulate a benchmark of a simple Spring Boot API (`findUserById`) bombarded by 500 simultaneous users.
+Let's simulate a benchmark of a simple Spring Boot API (`findUserById`) bombarded by 500 concurrent users.
 
 **Environment:**
-* DB: 4 vCPUs.
-* App: Spring Boot + HikariCP.
-* Load: 500 Concurrent Requests.
+*   DB: 4 vCPUs.
+*   App: Spring Boot + HikariCP.
+*   Load: 500 Concurrent Requests.
 
 #### 1. Throughput (Transactions per Second)
 
-In this graph, we see the system's behavior varying the pool size from 1 to 100.
+In this graph, we see the system's behavior by varying the pool size from 1 to 100.
 
 ```mermaid
 xychart-beta
@@ -326,16 +330,16 @@ xychart-beta
 **Analysis:**
 *   **Pool 1 to 5:** Linear growth. Adding connections helps.
 *   **Pool 10 (The Sweet Spot):** Maximum throughput. The CPU is saturated with useful work.
-*   **Pool 50 to 100:** Throughput **drops dramatically**. The overhead outweighs the gain.
+*   **Pool 50 to 100:** Throughput **drops drastically**. The overhead outweighs the gain.
 
 #### 2. Latency (Response Time - 95th Percentile)
 
-The impact on latency is even worse. With many connections, some requests "win the lottery" and get CPU time, others get stuck in the OS scheduler queue.
+The impact on latency is even worse. With many connections, some requests "win the lottery" and get the CPU, others get stuck in the OS scheduler queue.
 
 ```mermaid
 xychart-beta
-    title "Average Latency (ms) - Lower is better"
-    x-axis ["Pool Size 10 (Ideal)", "Pool Size 100 (Excess)"]
+    title "Average Latency (ms) - Lower is Better"
+    x-axis ["Pool Size 10 (Ideal)", "Pool Size 100 (Excessive)"]
     y-axis "Milliseconds" 0 --> 200
     bar [15, 140]
 ```
@@ -344,9 +348,9 @@ xychart-beta
 
 ### How to Configure Correctly in Spring Boot
 
-Now that you know that indiscriminately increasing the pool is a mistake, here's the checklist for configuring HikariCP for maximum efficiency:
+Now that you know that indiscriminately increasing the pool is a mistake, here's the checklist to configure HikariCP for maximum efficiency:
 
-#### 1. Find Your Cores
+#### 1. Discover your Cores
 Check how many vCPUs your database has. Let's assume **4 vCPUs**.
 
 #### 2. Configure `maximum-pool-size`
@@ -357,19 +361,19 @@ Use the formula: `Cores * 2`.
 spring.datasource.hikari.maximum-pool-size=10
 ```
 
-#### 3. Eliminate Dynamic Resizing
-Many tutorials recommend a low `minimum-idle` to "save resources." In HikariCP, the recommendation is to **fix the pool size**. If you want top performance, you don't want to pay the cost of a *handshake* (SSL/TCP connection opening) in the middle of a traffic spike.
+#### 3. Eliminate dynamic resizing
+Many tutorials recommend a low `minimum-idle` to "save resources." In HikariCP, the recommendation is to **fix the pool size**. If you want top performance, you don't want to pay the cost of a handshake (SSL/TCP connection opening) in the middle of a traffic peak.
 
 ```properties
-# Keep it equal to the maximum. The pool remains "warm" and ready.
+# Keep it equal to max. The pool is always "warm" and ready.
 spring.datasource.hikari.minimum-idle=10
 ```
 
 #### 4. Adjust Timeout
-If all 10 connections are busy, the 11th request will wait. The default is 30 seconds. This is an eternity for a REST API. Fail fast to free up the web server thread.
+If all 10 connections are busy, the 11th request will wait. The default is 30 seconds. That's an eternity for a REST API. Fail fast to free up the web server thread.
 
 ```properties
-# If a connection cannot be obtained in 2 seconds, throw an error.
+# If a connection can't be obtained in 2 seconds, throw an error.
 spring.datasource.hikari.connection-timeout=2000
 ```
 
@@ -377,16 +381,16 @@ spring.datasource.hikari.connection-timeout=2000
 
 ### Conclusion
 
-The intuition of "more is better" does not apply to connection pools. The speed limit is not the pool size configured in the application; it's the physics of your database's CPU.
+The intuition of "the more, the merrier" does not apply to connection pools. The speed limit is not the pool size configured in the application; it's the physics of your database's CPU.
 
-A small and well-sized pool (fixed at an optimal size) results in:
+A small, well-sized pool (fixed at the optimal size) results in:
 1.  **Lower Latency:** Queries don't contend for CPU attention.
-2.  **Higher Throughput:** Less time spent on Context Switching.
-3.  **Stability:** The database doesn't crash under extreme load; the bottleneck is controlled in the application (in the pool queue).
+2.  **Higher Throughput:** Less time spent in Context Switching.
+3.  **Stability:** The database doesn't crash under extreme load; the bottleneck is controlled at the application level (in the pool queue).
 
-Next time you see a connection timeout, before increasing the pool to 100, check if your queries are slow (missing index?) or if you need to vertically scale (more CPU) your database. Increasing the pool will only sweep the dust under the rug — and create a mountain that will trip you up later.
+Next time you see a connection timeout, before increasing the pool to 100, check if your queries are slow (missing an index?) or if you need to vertically scale (more CPU) your database. Increasing the pool will only sweep dust under the rug — and create a mountain that will trip you up later.
 
 ---
 
 *This file is automatically generated and backed up from the blog system.*
-*Last updated: 2025-12-04T04:53:48.811Z*
+*Last updated: 2025-12-04T05:01:58.271Z*
